@@ -1,0 +1,46 @@
+# Python
+__pycache__/
+*.py[cod]
+*.egg
+*.egg-info/
+dist/
+build/
+
+# VSCode
+.vscode/
+
+# macOS/Windows
+.DS_Store
+Thumbs.db
+
+# Env + Secrets
+.env
+.env.*
+credentials.json
+*.pem
+*.key
+*.crt
+*.p12
+
+# Streamlit secrets
+.streamlit/secrets.toml
+
+# Output files
+*.mp4
+generated_video.mp4
+preview_*.mp4
+
+# Ignore compiled files and cache
+__pycache__/
+*.py[cod]
+
+# Ignore secrets and config
+.streamlit/secrets.toml
+
+# Ignore video outputs
+*.mp4
+
+# Ignore editor configs
+.vscode/
+.DS_Store
+Thumbs.db
