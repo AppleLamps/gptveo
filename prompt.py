@@ -14,17 +14,21 @@ MODEL_ID = "veo-2.0-generate-001"
 GCS_BUCKET_NAME = "applelamps-unique-veo-bucket"
 GCS_SUBFOLDER = "veo_outputs"
 
-# ==== AUTH (using st.secrets) ====
-credentials = service_account.Credentials.from_service_account_info(st.secrets["gcp"])
-access_token_request = requests.post(
-    url="https://oauth2.googleapis.com/token",
-    headers={"Content-Type": "application/x-www-form-urlencoded"},
-    data={
-        "grant_type": "urn:ietf:params:oauth:grant-type:jwt-bearer",
-        "assertion": credentials._make_authorization_grant_assertion(),
-    },
+# ==== AUTH (using st.secrets with proper scope) ====
+from google.auth.transport.requests import Request
+
+SCOPES = [
+    "https://www.googleapis.com/auth/cloud-platform",
+    "https://www.googleapis.com/auth/devstorage.read_write"
+]
+
+credentials = service_account.Credentials.from_service_account_info(
+    st.secrets["gcp"],
+    scopes=SCOPES
 )
-access_token = access_token_request.json().get("access_token")
+
+credentials.refresh(Request())
+access_token = credentials.token
 
 # ==== BUCKET MANAGEMENT ====
 def ensure_bucket_exists(bucket_name):
