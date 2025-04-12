@@ -71,6 +71,10 @@ def download_from_gcs(gcs_uri, local_path):
         blob_path = parts[1]
         bucket = storage_client.bucket(bucket_name)
         blob = bucket.blob(blob_path)
+        # Ensure local directory exists before downloading
+        local_dir = os.path.dirname(local_path)
+        if local_dir and not os.path.exists(local_dir):
+             os.makedirs(local_dir)
         blob.download_to_filename(local_path)
         return True
     except Exception as e:
@@ -221,7 +225,7 @@ body {
     border-radius: 0.5rem;
     padding: 0.75rem 1rem;
     font-weight: 500;
-    transition: background-color 0.3s ease, transform 0.1s ease;
+    transition: background-color 0.3s ease, transform 0.1s ease, border-color 0.3s ease; /* Added border-color transition */
 }
 .stButton>button:not(:disabled):hover { /* Apply hover only if not disabled */
     background-color: #4a90e2;
@@ -285,10 +289,12 @@ body {
     align-items: center; /* Center placeholder vertically */
     justify-content: center; /* Center placeholder horizontally */
     margin-bottom: 1rem; /* Space before buttons/expander */
+    min-height: 150px; /* Ensure content area has minimum height */
 }
-.video-content .stVideo { /* Ensure video element scales */
+.video-content .stVideo, .video-content .stImage { /* Ensure video/image element scales */
     width: 100%;
     max-height: 300px; /* Optional: Limit video height */
+    object-fit: contain; /* Ensure video/image fits within bounds */
 }
 .video-actions { /* Container for button/expander */
     flex-grow: 0;
@@ -318,11 +324,17 @@ body {
     margin-bottom: 1rem;
     border: 1px dashed #ced4da; /* Dashed border */
     display: flex; /* Center content vertically */
+    flex-direction: column; /* Stack icon and text */
     align-items: center;
     justify-content: center;
     min-height: 200px; /* Ensure it has some height */
     width: 100%; /* Take full width of container */
 }
+.video-placeholder span { /* Style the icon */
+    font-size: 2rem; /* Larger icon */
+    margin-bottom: 0.5rem;
+}
+
 
 /* Pagination */
 .pagination-container {
@@ -366,6 +378,8 @@ with tab1:
     # Function to update prompt in session state
     def set_prompt(text):
         st.session_state.prompt = text
+        # No explicit rerun needed here, text_area will update via Streamlit's flow
+        # when the button click causes a script rerun naturally.
 
     # Layout with columns
     prompt_col, preview_col = st.columns([1, 1])
@@ -385,16 +399,17 @@ with tab1:
         # Update session state if text_area changes (necessary if using value=)
         if prompt_input != st.session_state.prompt:
              st.session_state.prompt = prompt_input
-             # No rerun needed here, just update state
+             st.rerun() # Rerun needed if user types directly and we want state updated immediately
 
         # Example prompts section
         st.markdown("**Or try an example prompt:**")
         cols = st.columns(2)
         for i, ex_prompt in enumerate(example_prompts):
             with cols[i % 2]:
-                # Use on_click to set prompt and trigger rerun
-                if st.button(label=ex_prompt, key=f"ex_{i}", on_click=set_prompt, args=[ex_prompt], help=f"Use prompt: '{ex_prompt}'"):
-                    st.experimental_rerun() # Rerun needed to update text_area value visually
+                # Use on_click to set prompt. Rerun happens automatically.
+                st.button(label=ex_prompt, key=f"ex_{i}", on_click=set_prompt, args=[ex_prompt], help=f"Use prompt: '{ex_prompt}'")
+                # if st.button(...): # Old way
+                #    st.rerun() # Rerun needed to update text_area value visually
 
         st.divider()
 
@@ -424,31 +439,34 @@ with tab1:
 
     with preview_col:
         st.markdown('<div class="subheader"><h3>Video Preview</h3></div>', unsafe_allow_html=True)
-        result_container = st.container(height=500, border=False) # Add fixed height and border for preview area
+        result_container = st.container(height=500, border=False) # Add fixed height for preview area
 
         # Display placeholder if not generating and no video is present
         if not st.session_state.generating and not st.session_state.last_generated_video:
              with result_container:
-                st.markdown(f"<div class='video-placeholder'>🖼️<br>Your generated video will appear here.</div>", unsafe_allow_html=True)
+                st.markdown(f"<div class='video-placeholder'><span>🖼️</span>Your generated video will appear here.</div>", unsafe_allow_html=True)
 
         # Handle Generation Button Click
         if generate_btn:
             if not st.session_state.prompt.strip():
                 st.warning("Please enter a prompt before generating a video.")
-                # Clear generating flag if prompt was empty
-                st.session_state.generating = False # Ensure flag is reset
+                st.session_state.generating = False # Ensure flag is reset if prompt empty
             else:
                 # Set generating flag to True and rerun to disable button/show progress
                 st.session_state.generating = True
                 st.session_state.last_generated_video = None # Clear previous result
-                st.experimental_rerun() # Rerun to update UI (disable button, show progress)
+                st.rerun() # Rerun to update UI (disable button, show progress)
 
         # Show progress and generate video if the generating flag is set
         if st.session_state.generating:
             with result_container: # Display progress within the result container
                 progress_bar = st.progress(0, text="Initializing...")
                 status_text = st.empty() # Use for more detailed status
-                output_path = f"generated_video_{datetime.now().strftime('%Y%m%d_%H%M%S')}.mp4" # Unique output path
+                # Create a unique output path for each generation attempt
+                output_path = os.path.join("generated_videos", f"video_{datetime.now().strftime('%Y%m%d_%H%M%S')}.mp4")
+                # Ensure the output directory exists
+                os.makedirs(os.path.dirname(output_path), exist_ok=True)
+
 
                 try:
                     # Initialization step
@@ -468,7 +486,7 @@ with tab1:
                         progress_bar.empty()
                         st.error(f"⚠️ Generation failed: {error}")
                         st.session_state.generating = False # Reset flag on error
-                        st.experimental_rerun() # Rerun to show error and enable button
+                        st.rerun() # Rerun to show error and enable button
                     else:
                         # Processing step
                         status_text.text("🎞️ Processing video response...")
@@ -476,7 +494,8 @@ with tab1:
                         time.sleep(0.5)
 
                         # Download step
-                        status_text.text(f"⬇️ Downloading video from {video_uri}...")
+                        status_text.text(f"⬇️ Downloading video from GCS...") # Simplified message
+                        # st.text(f"⬇️ Downloading video from {video_uri}...") # Original message
                         if download_from_gcs(video_uri, output_path):
                             progress_bar.progress(90, text="Downloading...")
                             # Complete
@@ -494,22 +513,23 @@ with tab1:
                                 "timestamp": datetime.now()
                             }
                             st.session_state.generating = False # Reset flag on success
-                            st.experimental_rerun() # Rerun to display the video and details below
+                            st.rerun() # Rerun to display the video and details below
                         else:
                             # Handle download failure
                             status_text.empty()
                             progress_bar.empty()
                             st.error(f"⚠️ Video generated ({video_uri}) but failed to download for preview.")
                             st.session_state.generating = False # Reset flag
-                            st.experimental_rerun() # Rerun to show error and enable button
+                            st.rerun() # Rerun to show error and enable button
 
                 except Exception as e:
                     # Catch unexpected errors during the generation process
                     st.error(f"An unexpected error occurred: {e}")
                     st.session_state.generating = False # Ensure flag is reset
-                    if 'progress_bar' in locals(): progress_bar.empty()
-                    if 'status_text' in locals(): status_text.empty()
-                    st.experimental_rerun() # Rerun to reflect error state
+                    # Safely clear progress indicators if they exist
+                    if 'progress_bar' in locals() and hasattr(progress_bar, 'empty'): progress_bar.empty()
+                    if 'status_text' in locals() and hasattr(status_text, 'empty'): status_text.empty()
+                    st.rerun() # Rerun to reflect error state
 
 
         # Display the last successfully generated video if it exists and not currently generating
@@ -518,31 +538,37 @@ with tab1:
                 video_info = st.session_state.last_generated_video
                 st.success("✅ Video generated successfully!")
                 try:
-                    st.video(video_info["path"])
-                except FileNotFoundError:
-                     st.error(f"Error: Video file not found at {video_info['path']}. It might have been moved or deleted.")
-                     st.session_state.last_generated_video = None # Clear invalid state
+                    # Check if file exists before trying to display
+                    if os.path.exists(video_info["path"]):
+                         st.video(video_info["path"])
+                    else:
+                         st.error(f"Error: Video file not found at {video_info['path']}. It might have been moved or deleted.")
+                         st.session_state.last_generated_video = None # Clear invalid state
+                         st.rerun() # Rerun to update UI
                 except Exception as e:
                      st.error(f"Error displaying video: {e}")
                      st.session_state.last_generated_video = None # Clear invalid state
+                     st.rerun() # Rerun to update UI
 
 
-                # Download button and metadata (only if video displayed successfully)
+                # Download button and metadata (only if video displayed successfully and state is valid)
                 if st.session_state.last_generated_video:
                     dl_col, _ = st.columns([1, 1]) # Only need download column now
                     with dl_col:
                         try:
-                            with open(video_info["path"], "rb") as fp:
-                                st.download_button(
-                                    "⬇️ Download Video",
-                                    data=fp,
-                                    file_name=os.path.basename(video_info["path"]), # Use actual filename
-                                    mime="video/mp4",
-                                    use_container_width=True,
-                                    key="download_generated"
-                                )
-                        except FileNotFoundError:
-                            st.error("Could not find video file for download.")
+                            # Check file exists before opening for download
+                            if os.path.exists(video_info["path"]):
+                                with open(video_info["path"], "rb") as fp:
+                                    st.download_button(
+                                        "⬇️ Download Video",
+                                        data=fp,
+                                        file_name=os.path.basename(video_info["path"]), # Use actual filename
+                                        mime="video/mp4",
+                                        use_container_width=True,
+                                        key="download_generated"
+                                    )
+                            else:
+                                st.error("Download failed: Source file not found.")
                         except Exception as e:
                             st.error(f"Error preparing download: {e}")
 
@@ -554,7 +580,10 @@ with tab1:
                         st.markdown(f"> {video_info['prompt']}") # Blockquote prompt
                         st.markdown(f"**Duration:** {video_info['duration']} seconds")
                         st.markdown(f"**Aspect Ratio:** {video_info['aspect_ratio']}")
-                        st.markdown(f"**GCS URI:** `{video_info['uri']}`")
+                        # Use st.code for better display and copying of the URI
+                        st.markdown(f"**GCS URI:**")
+                        st.code(video_info['uri'], language=None)
+
 
 # --- Library Tab ---
 with tab2:
@@ -599,7 +628,7 @@ with tab2:
         prev_disabled = st.session_state.current_page <= 1
         if st.button("⬅️ Previous", disabled=prev_disabled, key="prev_page"):
             st.session_state.current_page -= 1
-            st.experimental_rerun()
+            st.rerun() # Use st.rerun()
         # Page indicator - Use number input for direct page selection
         page_selection = st.number_input(
                 f"Page (1-{total_pages})",
@@ -610,13 +639,13 @@ with tab2:
             )
         if page_selection != st.session_state.current_page:
              st.session_state.current_page = page_selection
-             st.experimental_rerun()
+             st.rerun() # Use st.rerun()
 
         # "Next" button
         next_disabled = st.session_state.current_page >= total_pages
         if st.button("Next ➡️", disabled=next_disabled, key="next_page"):
             st.session_state.current_page += 1
-            st.experimental_rerun()
+            st.rerun() # Use st.rerun()
         st.markdown('</div>', unsafe_allow_html=True)
 
         # Page info text
@@ -642,14 +671,14 @@ with tab2:
                     # Define a unique temp file path for each video shown
                     # Use a subfolder to keep things tidy
                     temp_dir = "temp_previews"
-                    if not os.path.exists(temp_dir):
-                        os.makedirs(temp_dir)
-                    # Create filename based on GCS path to avoid collisions
-                    safe_filename = uri.split('/')[-1]
-                    temp_file_path = os.path.join(temp_dir, f"preview_{safe_filename}")
+                    # Ensure the temp directory exists
+                    os.makedirs(temp_dir, exist_ok=True)
+                    # Create filename based on GCS path to avoid collisions and invalid chars
+                    safe_filename_base = os.path.basename(uri).replace(":", "_").replace("/", "_")
+                    temp_file_path = os.path.join(temp_dir, f"preview_{safe_filename_base}")
 
                     st.markdown(f"<div class='video-card'>", unsafe_allow_html=True)
-                    filename = uri.split("/")[-1]
+                    filename = os.path.basename(uri) # Get original filename for display
 
                     # Display Title
                     st.markdown(f"<div class='video-title'>{filename}</div>", unsafe_allow_html=True)
@@ -660,9 +689,10 @@ with tab2:
                         if os.path.exists(temp_file_path):
                            file_timestamp = os.path.getctime(temp_file_path)
                            file_date_str = datetime.fromtimestamp(file_timestamp).strftime('%Y-%m-%d %H:%M')
-                        # Alternative: Fetch GCS blob metadata for accurate creation time
+                        # Alternative: Fetch GCS blob metadata for accurate creation time (more robust but slower)
                         # blob = storage_client.get_bucket(GCS_BUCKET_NAME).get_blob(uri.replace(f"gs://{GCS_BUCKET_NAME}/", ""))
                         # if blob and blob.time_created:
+                        #    # Adjust for timezone if needed, e.g., .astimezone(pytz.timezone('America/New_York'))
                         #    file_date_str = blob.time_created.strftime('%Y-%m-%d %H:%M')
                     except Exception as e:
                         # st.warning(f"Could not get date for {filename}: {e}") # Optional warning
@@ -672,36 +702,43 @@ with tab2:
                     # Video content area
                     st.markdown('<div class="video-content">', unsafe_allow_html=True)
                     video_placeholder = st.empty()
+                    # Flag to track if video is successfully displayed/downloaded
+                    video_ready = False
                     try:
                         # Download only if the temp file doesn't exist
                         needs_download = not os.path.exists(temp_file_path)
                         if needs_download:
                              with video_placeholder.spinner(f"Loading video..."):
-                                if not download_from_gcs(uri, temp_file_path):
+                                if download_from_gcs(uri, temp_file_path):
+                                     video_ready = True # Mark as ready after successful download
+                                else:
                                      video_placeholder.error("Failed to load video.")
-                                     temp_file_path = None # Mark as failed
+                                     # temp_file_path remains None or invalid
+                        else:
+                             video_ready = True # Already exists locally
+
                         # Display video if path is valid and file exists
-                        if temp_file_path and os.path.exists(temp_file_path):
+                        if video_ready and os.path.exists(temp_file_path):
                              video_placeholder.video(temp_file_path)
                         # Handle cases where download wasn't needed but file is missing, or download failed
                         elif not needs_download and not os.path.exists(temp_file_path):
-                             video_placeholder.error("Preview file missing. Please refresh.")
-                             temp_file_path = None # Mark as failed
-                        elif needs_download and not temp_file_path: # Download failed case
+                             video_placeholder.error("Preview file missing.")
+                             video_ready = False # Mark as not ready
+                        elif needs_download and not video_ready: # Download failed case
                              pass # Error already shown by spinner
                         else: # Should not happen, but catch all
                              video_placeholder.warning("Could not display video preview.")
-                             temp_file_path = None
+                             video_ready = False
 
                     except Exception as e:
                          video_placeholder.error(f"Error displaying video: {e}")
-                         temp_file_path = None # Mark as failed
+                         video_ready = False # Mark as not ready on error
                     st.markdown('</div>', unsafe_allow_html=True) # Close video-content
 
                     # Actions area (Download button, Expander)
                     st.markdown('<div class="video-actions">', unsafe_allow_html=True)
-                    # Download button for the specific video
-                    if temp_file_path and os.path.exists(temp_file_path):
+                    # Download button for the specific video - enable only if video_ready
+                    if video_ready and os.path.exists(temp_file_path):
                          try:
                               with open(temp_file_path, "rb") as fp:
                                    st.download_button(
@@ -714,8 +751,9 @@ with tab2:
                                    )
                          except Exception as e:
                               st.error(f"Download error: {e}")
+                              st.button("Download Error", disabled=True, use_container_width=True, key=f"download_{start_idx + i}_err")
                     else:
-                        # Optionally show a disabled button or message if preview failed
+                        # Show a disabled button if preview failed or file missing
                          st.button("Download Unavailable", disabled=True, use_container_width=True, key=f"download_{start_idx + i}_disabled")
 
 
